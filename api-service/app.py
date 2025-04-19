@@ -103,11 +103,19 @@ def simulate_episode():
     try:
         import gym
         
+        # First check if model is loaded
+        if model is None:
+            return jsonify({"error": "No model loaded"}), 400
+            
         # Create environment
         env = gym.make('CartPole-v1')
-        state = env.reset()
-        state = np.array(state) if isinstance(state, tuple) else state
-        
+        # Handle new reset API which might return (state, info)
+        reset_result = env.reset()
+        if isinstance(reset_result, tuple):
+            state = reset_result[0]  # Extract state from tuple
+        else:
+            state = reset_result
+
         done = False
         total_reward = 0
         steps = 0
@@ -118,7 +126,8 @@ def simulate_episode():
             state_tensor = torch.FloatTensor(state).to(device)
             action, q_values = predict_action(model, state_tensor)
             
-            next_state, reward, done, _ = env.step(action)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
             total_reward += reward
             steps += 1
             
@@ -141,7 +150,10 @@ def simulate_episode():
         return jsonify(result), 200
     
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        error_msg = traceback.format_exc()
+        print(f"Error in simulate_episode: {error_msg}")
+        return jsonify({"error": str(e), "traceback": error_msg}), 500
 
 @app.route('/evaluate', methods=['GET'])
 def evaluate_model():
@@ -156,7 +168,11 @@ def evaluate_model():
         
         scores = []
         for episode in range(episodes):
-            state = env.reset()
+            reset_result = env.reset()
+            if isinstance(reset_result, tuple):
+                state = reset_result[0]  # Extract state from tuple
+            else:
+                state = reset_result
             state = np.array(state) if isinstance(state, tuple) else state
             
             done = False
@@ -166,7 +182,8 @@ def evaluate_model():
                 state_tensor = torch.FloatTensor(state).to(device)
                 action, _ = predict_action(model, state_tensor)
                 
-                next_state, reward, done, _ = env.step(action)
+                next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
                 episode_score += reward
                 
                 state = next_state

@@ -118,7 +118,8 @@ def main():
             while not done:
                 # Select and perform action
                 action = agent.select_action(state)
-                next_state, reward, done, terminated, trunacated = env.step(action)
+                next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated  # Combine both signals to determine if episode is over
                 
                 episode_score += reward
                 

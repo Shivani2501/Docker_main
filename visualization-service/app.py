@@ -137,7 +137,7 @@ page = st.sidebar.radio("Select a page", ["Training Metrics", "Model Evaluation"
 # Refresh button
 if st.sidebar.button("🔄 Refresh Data"):
     st.cache_data.clear()
-    st.rerun()
+    st.experimental_rerun()
 
 # Training Metrics Page
 if page == "Training Metrics":
