@@ -107,7 +107,9 @@ def main():
         logger.info(f"Starting training for {EPISODES} episodes")
         for episode in range(1, EPISODES + 1):
             state = env.reset()
-            state = np.array(state) if isinstance(state, tuple) else state
+            if isinstance(state, tuple):
+                state = state[0]  # Get just the observation from reset() return
+            state = np.array(state, dtype=np.float32)
             
             episode_score = 0
             episode_loss = 0
@@ -116,7 +118,7 @@ def main():
             while not done:
                 # Select and perform action
                 action = agent.select_action(state)
-                next_state, reward, done, _ = env.step(action)
+                next_state, reward, done, terminated, trunacated = env.step(action)
                 
                 episode_score += reward
                 

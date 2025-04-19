@@ -14,7 +14,7 @@ services:
       - EPSILON_START=${EPSILON_START:-1.0}
       - EPSILON_END=${EPSILON_END:-0.01}
       - EPSILON_DECAY=${EPSILON_DECAY:-0.995}
-      - MLFLOW_TRACKING_URI=http://monitoring-service:5000
+      - MLFLOW_TRACKING_URI=http://monitoring-service:5001
     networks:
       - dqn-network
     depends_on:
