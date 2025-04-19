@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  training-service:
+    build: ./training-service
+    volumes:
+      - shared-volume:/app/models
+      - shared-volume:/app/logs
+    environment:
+      - EPISODES=${EPISODES:-1000}
+      - BATCH_SIZE=${BATCH_SIZE:-64}
+      - LEARNING_RATE=${LEARNING_RATE:-0.001}
+      - DISCOUNT_FACTOR=${DISCOUNT_FACTOR:-0.99}
+      - EPSILON_START=${EPSILON_START:-1.0}
+      - EPSILON_END=${EPSILON_END:-0.01}
+      - EPSILON_DECAY=${EPSILON_DECAY:-0.995}
+      - MLFLOW_TRACKING_URI=http://monitoring-service:5000
+    networks:
+      - dqn-network
+    depends_on:
+      - monitoring-service
+
+  api-service:
+    build: ./api-service
+    volumes:
+      - shared-volume:/app/models
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PATH=/app/models/best_model.pth
+    networks:
+      - dqn-network
+    depends_on:
+      - training-service
+
+  monitoring-service:
+    build: ./monitoring-service
+    volumes:
+      - shared-volume:/app/logs
+      - shared-volume:/app/mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://localhost:5000
+    networks:
+      - dqn-network
+
+  visualization-service:
+    build: ./visualization-service
+    volumes:
+      - shared-volume:/app/logs
+      - shared-volume:/app/models
+    ports:
+      - "8501:8501"
+    environment:
+      - LOG_PATH=/app/logs
+    networks:
+      - dqn-network
+    depends_on:
+      - monitoring-service
+      - training-service
+
+volumes:
+  shared-volume:
+
+networks:
+  dqn-network:
+    driver: bridge
