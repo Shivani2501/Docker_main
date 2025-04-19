@@ -18,7 +18,9 @@ services:
     networks:
       - dqn-network
     depends_on:
-      - monitoring-service
+      monitoring-service:
+        condition: service_healthy
+    restart: on-failure
 
   api-service:
     build: ./api-service
@@ -31,7 +33,7 @@ services:
     networks:
       - dqn-network
     depends_on:
-      - training-service
+      - monitoring-service
 
   monitoring-service:
     build: ./monitoring-service
@@ -39,11 +41,18 @@ services:
       - shared-volume:/app/logs
       - shared-volume:/app/mlflow
     ports:
-      - "5000:5000"
+      - "5000:5000"  # Flask app
+      - "5001:5001"  # MLflow server
     environment:
-      - MLFLOW_TRACKING_URI=http://localhost:5000
+      - MLFLOW_TRACKING_URI=http://0.0.0.0:5001
     networks:
       - dqn-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   visualization-service:
     build: ./visualization-service

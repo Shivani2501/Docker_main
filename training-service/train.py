@@ -39,10 +39,31 @@ LOG_DIR = "/app/logs"
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
+def connect_to_mlflow(max_retries=5, retry_delay=5):
+    """Connect to MLflow with retry logic."""
+    for attempt in range(max_retries):
+        try:
+            mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://monitoring-service:5001")
+            logger.info(f"Connecting to MLflow at {mlflow_uri}, attempt {attempt+1}/{max_retries}")
+            mlflow.set_tracking_uri(mlflow_uri)
+            # Test connection by creating experiment
+            mlflow.set_experiment("DQN-CartPole")
+            logger.info("Successfully connected to MLflow")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to connect to MLflow: {str(e)}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                logger.error("Max retries reached, could not connect to MLflow")
+                return False
+            
 def main():
-    # Set up MLflow
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://monitoring-service:5000"))
-    mlflow.set_experiment("DQN-CartPole")
+    # Connect to MLflow with retry logic
+    if not connect_to_mlflow():
+        logger.error("Could not connect to MLflow, exiting")
+        return
     
     # Create environment
     env = gym.make(ENV_NAME)

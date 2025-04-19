@@ -3,7 +3,15 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import os
+import logging
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger("api-service")
 
 class DQNNetwork(nn.Module):
     """Deep Q-Network for CartPole environment."""
@@ -22,9 +30,41 @@ class DQNNetwork(nn.Module):
         return self.fc4(x)
 
 
+def create_default_model(model_path, device):
+    """Create a default model if none exists."""
+    logger.info("Creating default model")
+    # For CartPole
+    state_size = 4
+    action_size = 2
+    
+    # Create a basic model with default parameters
+    model = DQNNetwork(state_size, action_size)
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    
+    # Save the model
+    torch.save({
+        'q_network_state_dict': model.state_dict(),
+        'target_network_state_dict': model.state_dict(),
+        'optimizer_state_dict': {},
+        'epsilon': 0.01
+    }, model_path)
+    
+    model.to(device)
+    model.eval()
+    logger.info(f"Default model created and saved to {model_path}")
+    return model
+
+
 def load_model(model_path, device):
     """Load trained model from path."""
     try:
+        # Check if model file exists
+        if not os.path.exists(model_path):
+            logger.warning(f"Model not found at {model_path}. Creating a default model.")
+            return create_default_model(model_path, device)
+        
         # For CartPole
         state_size = 4
         action_size = 2
@@ -40,12 +80,13 @@ def load_model(model_path, device):
         model.eval()
         model.to(device)
         
-        print(f"Model loaded successfully from {model_path}")
+        logger.info(f"Model loaded successfully from {model_path}")
         return model
     
     except Exception as e:
-        print(f"Error loading model: {str(e)}")
-        return None
+        logger.error(f"Error loading model: {str(e)}")
+        logger.info("Creating default model instead")
+        return create_default_model(model_path, device)
 
 
 def predict_action(model, state_tensor):

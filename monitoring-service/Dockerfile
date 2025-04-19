@@ -8,6 +8,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y curl && apt-get clean
+
 # Copy source code
 COPY monitor.py .
 
@@ -19,7 +22,7 @@ EXPOSE 5000
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV MLFLOW_TRACKING_URI=http://localhost:5000
+ENV MLFLOW_TRACKING_URI=http://0.0.0.0:5000
 
 # Run the monitoring server
 CMD ["python", "monitor.py"]

@@ -3,9 +3,12 @@
 import os
 import mlflow
 import mlflow.pytorch
+import threading
+import subprocess
 from flask import Flask, jsonify, request
 from waitress import serve
 import logging
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -18,9 +21,31 @@ logger = logging.getLogger("monitoring-service")
 os.makedirs("/app/mlflow", exist_ok=True)
 os.makedirs("/app/logs", exist_ok=True)
 
-# Set environment variables for MLflow
-os.environ["MLFLOW_TRACKING_DIR"] = "/app/mlflow"
+# Function to start MLflow server in a separate thread
+def start_mlflow_server():
+    logger.info("Starting MLflow server process")
+    mlflow_cmd = [
+        "mlflow", "server",
+        "--backend-store-uri", "sqlite:///mlflow.db",
+        "--default-artifact-root", "/app/mlflow/artifacts",
+        "--host", "0.0.0.0",
+        "--port", "5001"  # Use different port than Flask
+    ]
+    subprocess.run(mlflow_cmd)
 
+# Start MLflow server in a separate thread
+logger.info("Starting MLflow tracking server")
+mlflow_thread = threading.Thread(target=start_mlflow_server)
+mlflow_thread.daemon = True  # Thread will exit when main program exits
+mlflow_thread.start()
+
+# Set MLflow tracking URI
+mlflow.set_tracking_uri("http://localhost:5001")
+
+# Wait a bit for MLflow server to start up
+time.sleep(5)
+
+# Create Flask app
 app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
@@ -31,12 +56,20 @@ def home():
         "status": "running",
         "endpoints": {
             "/": "This help message",
-            "/api/v2/mlflow": "MLflow tracking server API",
+            "/mlflow": "MLflow UI (redirects to MLflow server)",
             "/health": "Health check endpoint",
             "/experiments": "List all experiments",
             "/runs/{experiment_id}": "List runs for an experiment",
             "/metrics/{run_id}": "Get metrics for a run"
         }
+    })
+
+@app.route('/mlflow', methods=['GET'])
+def mlflow_redirect():
+    """Redirect to MLflow UI."""
+    return jsonify({
+        "message": "MLflow server running on port 5001",
+        "url": "http://localhost:5001"
     })
 
 @app.route('/health', methods=['GET'])
@@ -201,9 +234,6 @@ def get_best_model():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # Start MLflow server
-    logger.info("Starting MLflow tracking server")
-    
     # Start Flask app
     logger.info("Starting Flask app")
     serve(app, host='0.0.0.0', port=5000)
