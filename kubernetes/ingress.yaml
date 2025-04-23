@@ -1,0 +1,33 @@
+# kubernetes/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dqn-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /api(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8000
+      - path: /viz(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: visualization-service
+            port:
+              number: 8501
+      - path: /mlflow(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: monitoring-service
+            port:
+              number: 5001
+---

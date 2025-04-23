@@ -1,0 +1,17 @@
+# kubernetes/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dqn-config
+data:
+  EPISODES: "1000"
+  BATCH_SIZE: "64"
+  LEARNING_RATE: "0.001"
+  DISCOUNT_FACTOR: "0.99"
+  EPSILON_START: "1.0"
+  EPSILON_END: "0.01"
+  EPSILON_DECAY: "0.995"
+  MODEL_PATH: "/app/models/best_model.pth"
+  LOG_PATH: "/app/logs"
+  MLFLOW_TRACKING_URI: "http://monitoring-service:5001"
+---

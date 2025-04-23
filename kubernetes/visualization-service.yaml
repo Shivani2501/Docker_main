@@ -1,0 +1,53 @@
+# kubernetes/visualization-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: visualization-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: visualization-service
+  template:
+    metadata:
+      labels:
+        app: visualization-service
+    spec:
+      containers:
+      - name: visualization-service
+        image: ${REGISTRY}/visualization-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8501
+        env:
+        - name: LOG_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: dqn-config
+              key: LOG_PATH
+        volumeMounts:
+        - name: shared-volume
+          mountPath: /app/logs
+        - name: shared-volume
+          mountPath: /app/models
+      volumes:
+      - name: shared-volume
+        persistentVolumeClaim:
+          claimName: shared-volume-claim
+      initContainers:
+      - name: wait-for-services
+        image: busybox
+        command: ['sh', '-c', 'until wget -qO- http://monitoring-service:5001/health; do echo waiting for monitoring-service; sleep 2; done']
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: visualization-service
+spec:
+  selector:
+    app: visualization-service
+  ports:
+  - port: 8501
+    targetPort: 8501
+  type: ClusterIP
+---

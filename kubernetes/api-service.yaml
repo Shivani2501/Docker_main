@@ -1,0 +1,54 @@
+# kubernetes/api-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-service
+  template:
+    metadata:
+      labels:
+        app: api-service
+    spec:
+      containers:
+      - name: api-service
+        image: ${REGISTRY}/api-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MODEL_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: dqn-config
+              key: MODEL_PATH
+        volumeMounts:
+        - name: shared-volume
+          mountPath: /app/models
+      volumes:
+      - name: shared-volume
+        persistentVolumeClaim:
+          claimName: shared-volume-claim
+      initContainers:
+      - name: check-model-exists
+        image: busybox
+        command: ['sh', '-c', 'until [ -f /app/models/best_model.pth ]; do echo waiting for model file; sleep 10; done']
+        volumeMounts:
+        - name: shared-volume
+          mountPath: /app/models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+spec:
+  selector:
+    app: api-service
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP
+---

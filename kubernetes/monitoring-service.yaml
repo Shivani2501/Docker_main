@@ -1,0 +1,60 @@
+# kubernetes/monitoring-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring-service
+  template:
+    metadata:
+      labels:
+        app: monitoring-service
+    spec:
+      containers:
+      - name: monitoring-service
+        image: ${REGISTRY}/monitoring-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+          name: flask
+        - containerPort: 5001
+          name: mlflow
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://0.0.0.0:5001"
+        volumeMounts:
+        - name: shared-volume
+          mountPath: /app/logs
+        - name: shared-volume
+          mountPath: /app/mlflow
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: shared-volume
+        persistentVolumeClaim:
+          claimName: shared-volume-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-service
+spec:
+  selector:
+    app: monitoring-service
+  ports:
+  - name: flask
+    port: 5000
+    targetPort: 5000
+  - name: mlflow
+    port: 5001
+    targetPort: 5001
+  type: ClusterIP
+---

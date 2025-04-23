@@ -1,0 +1,12 @@
+# kubernetes/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: kustomization
+
+resources:
+  - shared-pvc.yaml
+  - configmap.yaml
+  - monitoring-service.yaml
+  - training-service.yaml
+  - api-service.yaml
+  - visualization-service.yaml
+  - ingress.yaml
