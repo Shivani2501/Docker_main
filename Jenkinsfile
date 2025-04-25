@@ -6,7 +6,6 @@ pipeline {
         REGISTRY = credentials('docker-registry-url') // e.g., 'doublerandomexp25' or 'docker.io/doublerandomexp25'
         REGISTRY_CREDENTIAL = 'docker-hub-credentials' // Jenkins credential ID
         VERSION = "${env.BUILD_NUMBER}"
-        EMAIL_RECIPIENTS = 'your-email@example.com' // Set your email address here
     }
     
     stages {
@@ -41,34 +40,19 @@ pipeline {
         stage('Push Images') {
             steps {
                 script {
-                    try {
-                        // Log in to Docker registry
-                        docker.withRegistry('', REGISTRY_CREDENTIAL) {
-                            // Push the images
-                            sh "docker push ${REGISTRY}/api-service:${VERSION}"
-                            sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
-                            sh "docker push ${REGISTRY}/training-service:${VERSION}"
-                            sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
-                            
-                            // Push latest tags
-                            sh "docker push ${REGISTRY}/api-service:latest"
-                            sh "docker push ${REGISTRY}/monitoring-service:latest"
-                            sh "docker push ${REGISTRY}/training-service:latest"
-                            sh "docker push ${REGISTRY}/visualization-service:latest"
-                        }
-                    } catch (Exception e) {
-                        // Send notification email if pushing fails
-                        emailext (
-                            subject: "ERROR: Docker Push Failed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                            body: """
-                            <p>Docker push failed in the Jenkins pipeline.</p>
-                            <p><b>Error details:</b><br>${e.getMessage()}</p>
-                            <p>Check the console output at: ${env.BUILD_URL}</p>
-                            """,
-                            to: "${EMAIL_RECIPIENTS}",
-                            mimeType: 'text/html'
-                        )
-                        throw e  // Re-throw the exception to mark the stage as failed
+                    // Log in to Docker registry
+                    docker.withRegistry('', REGISTRY_CREDENTIAL) {
+                        // Push the images
+                        sh "docker push ${REGISTRY}/api-service:${VERSION}"
+                        sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
+                        sh "docker push ${REGISTRY}/training-service:${VERSION}"
+                        sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
+                        
+                        // Push latest tags
+                        sh "docker push ${REGISTRY}/api-service:latest"
+                        sh "docker push ${REGISTRY}/monitoring-service:latest"
+                        sh "docker push ${REGISTRY}/training-service:latest"
+                        sh "docker push ${REGISTRY}/visualization-service:latest"
                     }
                 }
             }
@@ -93,33 +77,18 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    try {
-                        // Use kubectl to apply the manifests
-                        withKubeConfig([credentialsId: 'kubernetes-config']) {
-                            sh 'kubectl apply -f k8s-processed/'
-                            
-                            // Check deployment status
-                            sh '''
-                            echo "Waiting for deployments to be ready..."
-                            kubectl wait --for=condition=Available --timeout=300s deployment/api-service
-                            kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service
-                            kubectl wait --for=condition=Available --timeout=300s deployment/training-service
-                            kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service
-                            '''
-                        }
-                    } catch (Exception e) {
-                        // Send notification email if deployment fails
-                        emailext (
-                            subject: "ERROR: Kubernetes Deployment Failed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                            body: """
-                            <p>Kubernetes deployment failed in the Jenkins pipeline.</p>
-                            <p><b>Error details:</b><br>${e.getMessage()}</p>
-                            <p>Check the console output at: ${env.BUILD_URL}</p>
-                            """,
-                            to: "${EMAIL_RECIPIENTS}",
-                            mimeType: 'text/html'
-                        )
-                        throw e  // Re-throw the exception to mark the stage as failed
+                    // Use kubectl to apply the manifests
+                    withKubeConfig([credentialsId: 'kubernetes-config']) {
+                        sh 'kubectl apply -f k8s-processed/'
+                        
+                        // Check deployment status
+                        sh '''
+                        echo "Waiting for deployments to be ready..."
+                        kubectl wait --for=condition=Available --timeout=300s deployment/api-service
+                        kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service
+                        kubectl wait --for=condition=Available --timeout=300s deployment/training-service
+                        kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service
+                        '''
                     }
                 }
             }
@@ -149,16 +118,7 @@ pipeline {
         }
         
         failure {
-            // General failure notification
-            emailext (
-                subject: "FAILED: Pipeline - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: """
-                <p>The Jenkins pipeline has failed.</p>
-                <p>Check the console output at: ${env.BUILD_URL}</p>
-                """,
-                to: "${EMAIL_RECIPIENTS}",
-                mimeType: 'text/html'
-            )
+            echo 'Pipeline failed!'
         }
     }
 }
