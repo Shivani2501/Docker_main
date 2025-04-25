@@ -2,9 +2,8 @@ pipeline {
     agent any
     
     environment {
-        // Define environment variables used in the pipeline
-        REGISTRY = credentials('docker-registry-url') // Ensure this returns just 'doublerandomexp25'
-        REGISTRY_CREDENTIAL = 'docker-hub-credentials' // Jenkins credential ID
+        REGISTRY = "doublerandomexp25"
+        REGISTRY_CREDENTIAL = 'docker-hub-credentials'
         VERSION = "${env.BUILD_NUMBER}"
     }
     
@@ -18,98 +17,62 @@ pipeline {
         
         stage('Build Images') {
             steps {
-                script {
-                    // Build the Docker images
-                    sh "docker build -t ${REGISTRY}/api-service:${VERSION} ./api-service"
-                    sh "docker build -t ${REGISTRY}/monitoring-service:${VERSION} ./monitoring-service"
-                    sh "docker build -t ${REGISTRY}/training-service:${VERSION} ./training-service"
-                    sh "docker build -t ${REGISTRY}/visualization-service:${VERSION} ./visualization-service"
-                    
-                    // Also tag as latest
-                    sh "docker tag ${REGISTRY}/api-service:${VERSION} ${REGISTRY}/api-service:latest"
-                    sh "docker tag ${REGISTRY}/monitoring-service:${VERSION} ${REGISTRY}/monitoring-service:latest"
-                    sh "docker tag ${REGISTRY}/training-service:${VERSION} ${REGISTRY}/training-service:latest"
-                    sh "docker tag ${REGISTRY}/visualization-service:${VERSION} ${REGISTRY}/visualization-service:latest"
-                }
+                sh "docker build -t ${REGISTRY}/api-service:${VERSION} ./api-service"
+                sh "docker build -t ${REGISTRY}/monitoring-service:${VERSION} ./monitoring-service"
+                sh "docker build -t ${REGISTRY}/training-service:${VERSION} ./training-service"
+                sh "docker build -t ${REGISTRY}/visualization-service:${VERSION} ./visualization-service"
+                
+                sh "docker tag ${REGISTRY}/api-service:${VERSION} ${REGISTRY}/api-service:latest"
+                sh "docker tag ${REGISTRY}/monitoring-service:${VERSION} ${REGISTRY}/monitoring-service:latest"
+                sh "docker tag ${REGISTRY}/training-service:${VERSION} ${REGISTRY}/training-service:latest"
+                sh "docker tag ${REGISTRY}/visualization-service:${VERSION} ${REGISTRY}/visualization-service:latest"
             }
         }
         
         stage('Push Images') {
             steps {
-                script {
-                    // Log in to Docker registry
-                    docker.withRegistry('', REGISTRY_CREDENTIAL) {
-                        // Push the images with version tag
-                        sh "docker push ${REGISTRY}/api-service:${VERSION}"
-                        sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
-                        sh "docker push ${REGISTRY}/training-service:${VERSION}"
-                        sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
-                        
-                        // Push latest tags
-                        sh "docker push ${REGISTRY}/api-service:latest"
-                        sh "docker push ${REGISTRY}/monitoring-service:latest"
-                        sh "docker push ${REGISTRY}/training-service:latest"
-                        sh "docker push ${REGISTRY}/visualization-service:latest"
-                    }
+                withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                    sh "echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin"
+                    
+                    sh "docker push ${REGISTRY}/api-service:${VERSION}"
+                    sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
+                    sh "docker push ${REGISTRY}/training-service:${VERSION}"
+                    sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
+                    
+                    sh "docker push ${REGISTRY}/api-service:latest"
+                    sh "docker push ${REGISTRY}/monitoring-service:latest"
+                    sh "docker push ${REGISTRY}/training-service:latest"
+                    sh "docker push ${REGISTRY}/visualization-service:latest"
+                    
+                    sh "docker logout"
                 }
             }
         }
         
         stage('Update Kubernetes Manifests') {
             steps {
-                script {
-                    // Create a temporary directory for processed manifests
-                    sh "mkdir -p k8s-processed"
-                    
-                    // Export version for envsubst
-                    sh "export VERSION=${VERSION}"
-                    
-                    // Use envsubst for better variable substitution
-                    sh """
-                    for file in kubernetes/*.yaml; do
-                        export REGISTRY=${REGISTRY}
-                        export VERSION=${VERSION}
-                        envsubst '\${REGISTRY} \${VERSION}' < "\$file" > "k8s-processed/\$(basename \$file)"
-                    done
-                    """
-                }
+                sh "mkdir -p k8s-processed"
+                
+                sh """
+                for file in kubernetes/*.yaml; do
+                    sed 's|\\\${REGISTRY}|${REGISTRY}|g; s|:latest|:${VERSION}|g' "\$file" > "k8s-processed/\$(basename \$file)"
+                done
+                """
             }
         }
         
         stage('Deploy to Kubernetes') {
             steps {
-                script {
-                    // Use kubectl to apply the manifests
-                    withKubeConfig([credentialsId: 'kubernetes-config']) {
-                        sh 'kubectl apply -f k8s-processed/'
-                        
-                        // Check deployment status
-                        sh '''
-                        echo "Waiting for deployments to be ready..."
-                        kubectl wait --for=condition=Available --timeout=300s deployment/api-service
-                        kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service
-                        kubectl wait --for=condition=Available --timeout=300s deployment/training-service
-                        kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service
-                        '''
-                    }
-                }
-            }
-        }
-        
-        stage('Verify Deployment') {
-            steps {
-                script {
-                    withKubeConfig([credentialsId: 'kubernetes-config']) {
-                        // Get service endpoints
-                        sh 'kubectl get svc'
-                        
-                        // Check logs for any errors
-                        sh '''
-                        echo "Checking service logs..."
-                        kubectl logs -l app=api-service --tail=20
-                        kubectl logs -l app=monitoring-service --tail=20
-                        '''
-                    }
+                withKubeConfig([credentialsId: 'kubernetes-config']) {
+                    sh 'kubectl apply -f k8s-processed/'
+                    
+                    sh '''
+                    echo "Waiting for deployments to be ready..."
+                    kubectl wait --for=condition=Available --timeout=300s deployment/api-service
+                    kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service
+                    kubectl wait --for=condition=Available --timeout=300s deployment/training-service
+                    kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service
+                    '''
                 }
             }
         }
@@ -117,10 +80,8 @@ pipeline {
     
     post {
         always {
-            // Clean up processed manifests
             sh 'rm -rf k8s-processed'
             
-            // Clean up local Docker images to save space
             sh """
             docker rmi ${REGISTRY}/api-service:${VERSION} || true
             docker rmi ${REGISTRY}/monitoring-service:${VERSION} || true
