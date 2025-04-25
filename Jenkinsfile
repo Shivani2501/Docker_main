@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         // Define environment variables used in the pipeline
-        REGISTRY = credentials('docker-registry-url') // e.g., 'doublerandomexp25' or 'docker.io/doublerandomexp25'
+        REGISTRY = credentials('docker-registry-url') // Ensure this returns just 'doublerandomexp25'
         REGISTRY_CREDENTIAL = 'docker-hub-credentials' // Jenkins credential ID
         VERSION = "${env.BUILD_NUMBER}"
     }
@@ -11,10 +11,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                // Checkout code from the repository
                 checkout scm
-                
-                // Print environment for debugging
                 sh 'ls -la'
             }
         }
@@ -42,7 +39,7 @@ pipeline {
                 script {
                     // Log in to Docker registry
                     docker.withRegistry('', REGISTRY_CREDENTIAL) {
-                        // Push the images
+                        // Push the images with version tag
                         sh "docker push ${REGISTRY}/api-service:${VERSION}"
                         sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
                         sh "docker push ${REGISTRY}/training-service:${VERSION}"
@@ -64,10 +61,15 @@ pipeline {
                     // Create a temporary directory for processed manifests
                     sh "mkdir -p k8s-processed"
                     
-                    // Update image tags in Kubernetes manifests
+                    // Export version for envsubst
+                    sh "export VERSION=${VERSION}"
+                    
+                    // Use envsubst for better variable substitution
                     sh """
                     for file in kubernetes/*.yaml; do
-                        sed 's|\${REGISTRY}|${REGISTRY}|g; s|:latest|:${VERSION}|g' "\$file" > "k8s-processed/\$(basename \$file)"
+                        export REGISTRY=${REGISTRY}
+                        export VERSION=${VERSION}
+                        envsubst '\${REGISTRY} \${VERSION}' < "\$file" > "k8s-processed/\$(basename \$file)"
                     done
                     """
                 }
@@ -88,6 +90,24 @@ pipeline {
                         kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service
                         kubectl wait --for=condition=Available --timeout=300s deployment/training-service
                         kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'kubernetes-config']) {
+                        // Get service endpoints
+                        sh 'kubectl get svc'
+                        
+                        // Check logs for any errors
+                        sh '''
+                        echo "Checking service logs..."
+                        kubectl logs -l app=api-service --tail=20
+                        kubectl logs -l app=monitoring-service --tail=20
                         '''
                     }
                 }
