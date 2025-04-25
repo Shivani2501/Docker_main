@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         REGISTRY = "doublerandomexp25"
-        REGISTRY_CREDENTIAL = 'docker-hub-credentials'
+        REGISTRY_CREDENTIAL = 'docker-hub-credential'
         VERSION = "${env.BUILD_NUMBER}"
     }
     
