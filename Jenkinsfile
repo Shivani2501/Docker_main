@@ -29,26 +29,51 @@ pipeline {
             }
         }
         
+        // stage('Push Images') {
+        //     steps {
+        //         withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+        //             sh "echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin"
+                    
+        //             sh "docker push ${REGISTRY}/api-service:${VERSION}"
+        //             sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
+        //             sh "docker push ${REGISTRY}/training-service:${VERSION}"
+        //             sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
+                    
+        //             sh "docker push ${REGISTRY}/api-service:latest"
+        //             sh "docker push ${REGISTRY}/monitoring-service:latest"
+        //             sh "docker push ${REGISTRY}/training-service:latest"
+        //             sh "docker push ${REGISTRY}/visualization-service:latest"
+                    
+        //             sh "docker logout"
+        //         }
+        //     }
+        // }
+        
         stage('Push Images') {
             steps {
-                withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
-                    sh "echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin"
+                withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, 
+                                                passwordVariable: 'DOCKER_PASSWORD', 
+                                                usernameVariable: 'DOCKER_USERNAME')]) {
+                    // Direct login command without piping password
+                    sh 'docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD'
                     
+                    // Push the version-tagged images
                     sh "docker push ${REGISTRY}/api-service:${VERSION}"
                     sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
                     sh "docker push ${REGISTRY}/training-service:${VERSION}"
                     sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
                     
+                    // Push the latest-tagged images
                     sh "docker push ${REGISTRY}/api-service:latest"
                     sh "docker push ${REGISTRY}/monitoring-service:latest"
                     sh "docker push ${REGISTRY}/training-service:latest"
                     sh "docker push ${REGISTRY}/visualization-service:latest"
                     
-                    sh "docker logout"
+                    // Logout when done
+                    sh 'docker logout'
                 }
             }
         }
-        
         stage('Update Kubernetes Manifests') {
             steps {
                 sh "mkdir -p k8s-processed"
