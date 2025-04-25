@@ -1,0 +1,129 @@
+pipeline {
+    agent any
+    
+    environment {
+        REGISTRY = "doublerandomexp25"
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        KUBECONFIG = credentials('kubeconfig')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                sh '''
+                # Run unit tests for each service
+                cd api-service && python -m pytest
+                cd ../training-service && python -m pytest
+                cd ../monitoring-service && python -m pytest
+                cd ../visualization-service && python -m pytest
+                '''
+            }
+        }
+        
+        stage('Build Images') {
+            steps {
+                sh '''
+                # Build Docker images with unique tags
+                docker build -t ${REGISTRY}/api-service:${IMAGE_TAG} ./api-service
+                docker build -t ${REGISTRY}/monitoring-service:${IMAGE_TAG} ./monitoring-service
+                docker build -t ${REGISTRY}/training-service:${IMAGE_TAG} ./training-service
+                docker build -t ${REGISTRY}/visualization-service:${IMAGE_TAG} ./visualization-service
+                
+                # Also tag as latest
+                docker tag ${REGISTRY}/api-service:${IMAGE_TAG} ${REGISTRY}/api-service:latest
+                docker tag ${REGISTRY}/monitoring-service:${IMAGE_TAG} ${REGISTRY}/monitoring-service:latest
+                docker tag ${REGISTRY}/training-service:${IMAGE_TAG} ${REGISTRY}/training-service:latest
+                docker tag ${REGISTRY}/visualization-service:${IMAGE_TAG} ${REGISTRY}/visualization-service:latest
+                '''
+            }
+        }
+        
+        stage('Push Images') {
+            steps {
+                withCredentials([string(credentialsId: 'docker-registry-credentials', variable: 'DOCKER_AUTH')]) {
+                    sh '''
+                    echo $DOCKER_AUTH | docker login -u ${REGISTRY} --password-stdin
+                    
+                    # Push both versioned and latest tags
+                    docker push ${REGISTRY}/api-service:${IMAGE_TAG}
+                    docker push ${REGISTRY}/monitoring-service:${IMAGE_TAG}
+                    docker push ${REGISTRY}/training-service:${IMAGE_TAG}
+                    docker push ${REGISTRY}/visualization-service:${IMAGE_TAG}
+                    
+                    docker push ${REGISTRY}/api-service:latest
+                    docker push ${REGISTRY}/monitoring-service:latest
+                    docker push ${REGISTRY}/training-service:latest
+                    docker push ${REGISTRY}/visualization-service:latest
+                    '''
+                }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                # Create temp directory for processed manifests
+                TMP_DIR=$(mktemp -d)
+                
+                # Set environment variables for manifest processing
+                export REGISTRY=${REGISTRY}
+                export IMAGE_TAG=${IMAGE_TAG}
+                
+                # Process each YAML file with envsubst
+                for file in kubernetes/*.yaml; do
+                    envsubst '${REGISTRY} ${IMAGE_TAG}' < "$file" > "$TMP_DIR/$(basename $file)"
+                done
+                
+                # Apply Kubernetes manifests
+                kubectl --kubeconfig=${KUBECONFIG} apply -f "$TMP_DIR"
+                
+                # Clean up
+                rm -rf "$TMP_DIR"
+                '''
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                # Wait for deployments to be ready
+                kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/api-service
+                kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/monitoring-service
+                kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/training-service
+                kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/visualization-service
+                
+                # Check that services are accessible
+                kubectl --kubeconfig=${KUBECONFIG} run curl --image=curlimages/curl -i --rm --restart=Never -- \
+                    curl -s http://api-service:8000/health
+                kubectl --kubeconfig=${KUBECONFIG} run curl --image=curlimages/curl -i --rm --restart=Never -- \
+                    curl -s http://monitoring-service:5001/health
+                '''
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Deployment successful!'
+        }
+        failure {
+            echo 'Deployment failed!'
+            // You could add steps to roll back to previous version here
+        }
+        always {
+            // Clean up local Docker images to save space
+            sh '''
+            docker rmi ${REGISTRY}/api-service:${IMAGE_TAG} || true
+            docker rmi ${REGISTRY}/monitoring-service:${IMAGE_TAG} || true
+            docker rmi ${REGISTRY}/training-service:${IMAGE_TAG} || true
+            docker rmi ${REGISTRY}/visualization-service:${IMAGE_TAG} || true
+            '''
+        }
+    }
+}
