@@ -15,6 +15,25 @@ pipeline {
             }
         }
         
+        stage('Fix Minikube Permissions') {
+            steps {
+                // Fix permissions for Minikube certificates
+                sh '''
+                    # Fix permissions for Minikube certificates
+                    sudo chmod -R 644 /home/ubuntu/.minikube/ca.crt || true
+                    sudo chmod -R 644 /home/ubuntu/.minikube/profiles/minikube/client.crt || true
+                    sudo chmod -R 644 /home/ubuntu/.minikube/profiles/minikube/client.key || true
+                    
+                    # Change ownership to jenkins user
+                    sudo chown -R jenkins:jenkins /home/ubuntu/.minikube || true
+                    
+                    # Ensure .kube directory is also accessible
+                    sudo chmod -R 755 /home/ubuntu/.kube || true
+                    sudo chown -R jenkins:jenkins /home/ubuntu/.kube || true
+                '''
+            }
+        }
+        
         stage('Build Images') {
             steps {
                 sh "docker build -t ${REGISTRY}/api-service:${VERSION} ./api-service"
@@ -29,51 +48,36 @@ pipeline {
             }
         }
         
-        // stage('Push Images') {
-        //     steps {
-        //         withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
-        //             sh "echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin"
-                    
-        //             sh "docker push ${REGISTRY}/api-service:${VERSION}"
-        //             sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
-        //             sh "docker push ${REGISTRY}/training-service:${VERSION}"
-        //             sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
-                    
-        //             sh "docker push ${REGISTRY}/api-service:latest"
-        //             sh "docker push ${REGISTRY}/monitoring-service:latest"
-        //             sh "docker push ${REGISTRY}/training-service:latest"
-        //             sh "docker push ${REGISTRY}/visualization-service:latest"
-                    
-        //             sh "docker logout"
-        //         }
-        //     }
-        // }
-        
         stage('Push Images') {
             steps {
                 withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, 
                                                 passwordVariable: 'DOCKER_PASSWORD', 
                                                 usernameVariable: 'DOCKER_USERNAME')]) {
-                    // Direct login command without piping password
-                    sh 'docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD'
-                    
-                    // Push the version-tagged images
-                    sh "docker push ${REGISTRY}/api-service:${VERSION}"
-                    sh "docker push ${REGISTRY}/monitoring-service:${VERSION}"
-                    sh "docker push ${REGISTRY}/training-service:${VERSION}"
-                    sh "docker push ${REGISTRY}/visualization-service:${VERSION}"
-                    
-                    // Push the latest-tagged images
-                    sh "docker push ${REGISTRY}/api-service:latest"
-                    sh "docker push ${REGISTRY}/monitoring-service:latest"
-                    sh "docker push ${REGISTRY}/training-service:latest"
-                    sh "docker push ${REGISTRY}/visualization-service:latest"
-                    
-                    // Logout when done
-                    sh 'docker logout'
+                    // Docker login with credentials
+                    sh '''
+                        # Create secure Docker config
+                        mkdir -p $HOME/.docker
+                        echo '{"auths":{"https://index.docker.io/v1/":{"auth":"'$(echo -n $DOCKER_USERNAME:$DOCKER_PASSWORD | base64)'"}}}' > $HOME/.docker/config.json
+                        
+                        # Push version-tagged images
+                        docker push ${REGISTRY}/api-service:${VERSION}
+                        docker push ${REGISTRY}/monitoring-service:${VERSION}
+                        docker push ${REGISTRY}/training-service:${VERSION}
+                        docker push ${REGISTRY}/visualization-service:${VERSION}
+                        
+                        # Push latest-tagged images
+                        docker push ${REGISTRY}/api-service:latest
+                        docker push ${REGISTRY}/monitoring-service:latest
+                        docker push ${REGISTRY}/training-service:latest
+                        docker push ${REGISTRY}/visualization-service:latest
+                        
+                        # Remove Docker config when done
+                        rm -f $HOME/.docker/config.json
+                    '''
                 }
             }
         }
+        
         stage('Update Kubernetes Manifests') {
             steps {
                 sh "mkdir -p k8s-processed"
@@ -83,20 +87,35 @@ pipeline {
                     sed 's|\\\${REGISTRY}|${REGISTRY}|g; s|:latest|:${VERSION}|g' "\$file" > "k8s-processed/\$(basename \$file)"
                 done
                 """
+                
+                // List processed files for debugging
+                sh "ls -la k8s-processed/"
             }
         }
         
         stage('Deploy to Kubernetes') {
             steps {
                 withKubeConfig([credentialsId: 'kubernetes-config']) {
-                    sh 'kubectl apply -f k8s-processed/'
-                    
                     sh '''
-                    echo "Waiting for deployments to be ready..."
-                    kubectl wait --for=condition=Available --timeout=300s deployment/api-service
-                    kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service
-                    kubectl wait --for=condition=Available --timeout=300s deployment/training-service
-                    kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service
+                        # Apply manifests with detailed output
+                        echo "Deploying to Kubernetes cluster..."
+                        kubectl apply -f k8s-processed/ --validate=true
+                        
+                        # Show deployment status
+                        echo "Current deployment status:"
+                        kubectl get pods
+                        kubectl get deployments
+                        
+                        # Wait for deployments to be ready
+                        echo "Waiting for deployments to be ready..."
+                        kubectl wait --for=condition=Available --timeout=300s deployment/api-service || true
+                        kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service || true
+                        kubectl wait --for=condition=Available --timeout=300s deployment/training-service || true
+                        kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service || true
+                        
+                        # Show final status
+                        echo "Final deployment status:"
+                        kubectl get pods
                     '''
                 }
             }
@@ -125,6 +144,12 @@ pipeline {
         
         failure {
             echo 'Pipeline failed!'
+            sh '''
+                echo "Debug information:"
+                kubectl get pods
+                kubectl describe pods
+                kubectl get events
+            '''
         }
     }
 }
