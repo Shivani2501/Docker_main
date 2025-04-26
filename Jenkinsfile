@@ -2,8 +2,7 @@ pipeline {
     agent any
     
     environment {
-        REGISTRY = "doublerandomexp25"
-        REGISTRY_CREDENTIAL = 'docker-hub-credential'
+        REGISTRY = "localhost"  // Use 'localhost' for local Minikube
         VERSION = "${env.BUILD_NUMBER}"
     }
     
@@ -11,131 +10,79 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                sh 'ls -la'
             }
         }
         
-        stage('Fix Minikube Permissions') {
+        stage('Connect to Minikube Docker') {
             steps {
-                // Fix permissions for Minikube certificates
+                // Evaluate the Minikube docker-env
                 sh '''
-                    # Fix permissions for Minikube certificates
-                    sudo chmod -R 644 /home/ubuntu/.minikube/ca.crt || true
-                    sudo chmod -R 644 /home/ubuntu/.minikube/profiles/minikube/client.crt || true
-                    sudo chmod -R 644 /home/ubuntu/.minikube/profiles/minikube/client.key || true
+                    # Get Minikube Docker environment
+                    eval $(minikube docker-env)
                     
-                    # Change ownership to jenkins user
-                    sudo chown -R jenkins:jenkins /home/ubuntu/.minikube || true
+                    # Export these for other stages
+                    echo "export DOCKER_TLS_VERIFY=\\"$(minikube docker-env | grep DOCKER_TLS_VERIFY | cut -d '=' -f2 | tr -d '\\"\\')\\"" > docker-env.sh
+                    echo "export DOCKER_HOST=\\"$(minikube docker-env | grep DOCKER_HOST | cut -d '=' -f2 | tr -d '\\"\\')\\"" >> docker-env.sh
+                    echo "export DOCKER_CERT_PATH=\\"$(minikube docker-env | grep DOCKER_CERT_PATH | cut -d '=' -f2 | tr -d '\\"\\')\\"" >> docker-env.sh
                     
-                    # Ensure .kube directory is also accessible
-                    sudo chmod -R 755 /home/ubuntu/.kube || true
-                    sudo chown -R jenkins:jenkins /home/ubuntu/.kube || true
+                    cat docker-env.sh
                 '''
             }
         }
         
         stage('Build Images') {
             steps {
-                sh "docker build -t ${REGISTRY}/api-service:${VERSION} ./api-service"
-                sh "docker build -t ${REGISTRY}/monitoring-service:${VERSION} ./monitoring-service"
-                sh "docker build -t ${REGISTRY}/training-service:${VERSION} ./training-service"
-                sh "docker build -t ${REGISTRY}/visualization-service:${VERSION} ./visualization-service"
-                
-                sh "docker tag ${REGISTRY}/api-service:${VERSION} ${REGISTRY}/api-service:latest"
-                sh "docker tag ${REGISTRY}/monitoring-service:${VERSION} ${REGISTRY}/monitoring-service:latest"
-                sh "docker tag ${REGISTRY}/training-service:${VERSION} ${REGISTRY}/training-service:latest"
-                sh "docker tag ${REGISTRY}/visualization-service:${VERSION} ${REGISTRY}/visualization-service:latest"
-            }
-        }
-        
-        stage('Push Images') {
-            steps {
-                withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, 
-                                                passwordVariable: 'DOCKER_PASSWORD', 
-                                                usernameVariable: 'DOCKER_USERNAME')]) {
-                    // Docker login with credentials
-                    sh '''
-                        # Create secure Docker config
-                        mkdir -p $HOME/.docker
-                        echo '{"auths":{"https://index.docker.io/v1/":{"auth":"'$(echo -n $DOCKER_USERNAME:$DOCKER_PASSWORD | base64)'"}}}' > $HOME/.docker/config.json
-                        
-                        # Push version-tagged images
-                        docker push ${REGISTRY}/api-service:${VERSION}
-                        docker push ${REGISTRY}/monitoring-service:${VERSION}
-                        docker push ${REGISTRY}/training-service:${VERSION}
-                        docker push ${REGISTRY}/visualization-service:${VERSION}
-                        
-                        # Push latest-tagged images
-                        docker push ${REGISTRY}/api-service:latest
-                        docker push ${REGISTRY}/monitoring-service:latest
-                        docker push ${REGISTRY}/training-service:latest
-                        docker push ${REGISTRY}/visualization-service:latest
-                        
-                        # Remove Docker config when done
-                        rm -f $HOME/.docker/config.json
-                    '''
-                }
+                sh '''
+                    # Load Minikube Docker environment
+                    source docker-env.sh
+                    
+                    # Build images directly in Minikube
+                    docker build -t ${REGISTRY}/api-service:${VERSION} ./api-service
+                    docker build -t ${REGISTRY}/monitoring-service:${VERSION} ./monitoring-service
+                    docker build -t ${REGISTRY}/training-service:${VERSION} ./training-service
+                    docker build -t ${REGISTRY}/visualization-service:${VERSION} ./visualization-service
+                    
+                    # Tag as latest too
+                    docker tag ${REGISTRY}/api-service:${VERSION} ${REGISTRY}/api-service:latest
+                    docker tag ${REGISTRY}/monitoring-service:${VERSION} ${REGISTRY}/monitoring-service:latest
+                    docker tag ${REGISTRY}/training-service:${VERSION} ${REGISTRY}/training-service:latest
+                    docker tag ${REGISTRY}/visualization-service:${VERSION} ${REGISTRY}/visualization-service:latest
+                '''
             }
         }
         
         stage('Update Kubernetes Manifests') {
             steps {
-                sh "mkdir -p k8s-processed"
-                
-                sh """
-                for file in kubernetes/*.yaml; do
-                    sed 's|\\\${REGISTRY}|${REGISTRY}|g; s|:latest|:${VERSION}|g' "\$file" > "k8s-processed/\$(basename \$file)"
-                done
-                """
-                
-                // List processed files for debugging
-                sh "ls -la k8s-processed/"
+                sh '''
+                    mkdir -p k8s-processed
+                    
+                    # Update registry and add imagePullPolicy: Never for local images
+                    for file in kubernetes/*.yaml; do
+                        sed 's|${REGISTRY}|localhost|g; s|:latest|:${VERSION}|g; s|imagePullPolicy: IfNotPresent|imagePullPolicy: Never|g' "$file" > "k8s-processed/$(basename $file)"
+                    done
+                    
+                    ls -la k8s-processed/
+                '''
             }
         }
         
         stage('Deploy to Kubernetes') {
             steps {
-                withKubeConfig([credentialsId: 'kubernetes-config']) {
-                    sh '''
-                        # Apply manifests with detailed output
-                        echo "Deploying to Kubernetes cluster..."
-                        kubectl apply -f k8s-processed/ --validate=true
-                        
-                        # Show deployment status
-                        echo "Current deployment status:"
-                        kubectl get pods
-                        kubectl get deployments
-                        
-                        # Wait for deployments to be ready
-                        echo "Waiting for deployments to be ready..."
-                        kubectl wait --for=condition=Available --timeout=300s deployment/api-service || true
-                        kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service || true
-                        kubectl wait --for=condition=Available --timeout=300s deployment/training-service || true
-                        kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service || true
-                        
-                        # Show final status
-                        echo "Final deployment status:"
-                        kubectl get pods
-                    '''
-                }
+                sh '''
+                    # Use Minikube kubectl directly
+                    minikube kubectl -- apply -f k8s-processed/
+                    
+                    # Show deployment status
+                    minikube kubectl -- get pods
+                    minikube kubectl -- get deployments
+                '''
             }
         }
     }
     
     post {
         always {
-            sh 'rm -rf k8s-processed'
-            
-            sh """
-            docker rmi ${REGISTRY}/api-service:${VERSION} || true
-            docker rmi ${REGISTRY}/monitoring-service:${VERSION} || true
-            docker rmi ${REGISTRY}/training-service:${VERSION} || true
-            docker rmi ${REGISTRY}/visualization-service:${VERSION} || true
-            docker rmi ${REGISTRY}/api-service:latest || true
-            docker rmi ${REGISTRY}/monitoring-service:latest || true
-            docker rmi ${REGISTRY}/training-service:latest || true
-            docker rmi ${REGISTRY}/visualization-service:latest || true
-            """
+            sh 'rm -rf k8s-processed docker-env.sh'
         }
         
         success {
@@ -144,12 +91,6 @@ pipeline {
         
         failure {
             echo 'Pipeline failed!'
-            sh '''
-                echo "Debug information:"
-                kubectl get pods
-                kubectl describe pods
-                kubectl get events
-            '''
         }
     }
 }
