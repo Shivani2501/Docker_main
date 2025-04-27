@@ -14,22 +14,8 @@ pipeline {
                 sh 'ls -la'
             }
         }
-        
-        stage('Fix Minikube Permissions') {
-            steps {
-                // Fix permissions for Minikube certificates
-                sh '''
-                    sudo chmod -R 644 /home/ubuntu/.minikube/ca.crt || true
-                    sudo chmod -R 644 /home/ubuntu/.minikube/profiles/minikube/client.crt || true
-                    sudo chmod -R 644 /home/ubuntu/.minikube/profiles/minikube/client.key || true
-                    sudo chown -R jenkins:jenkins /home/ubuntu/.minikube || true
-                    sudo chmod -R 755 /home/ubuntu/.kube || true
-                    sudo chown -R jenkins:jenkins /home/ubuntu/.kube || true
-                '''
-            }
-        }
-        
-        stage('Build Images') {
+
+        stage('Build & Tag Images') {
             steps {
                 sh "docker build -t ${REGISTRY}/api-service:${VERSION} ./api-service"
                 sh "docker build -t ${REGISTRY}/monitoring-service:${VERSION} ./monitoring-service"
@@ -65,7 +51,7 @@ pipeline {
             }
         }
         
-        stage('Update Kubernetes Manifests') {
+        stage('Process Kubernetes Manifests') {
             steps {
                 sh 'mkdir -p k8s-processed'
                 sh '''
@@ -76,23 +62,24 @@ pipeline {
                 sh 'ls -la k8s-processed/'
             }
         }
-        
+
         stage('Deploy to Kubernetes') {
             steps {
-                withKubeConfig([credentialsId: 'kubernetes-config']) {
+                // Requires Jenkins secret file credential 'kubeconfig' containing a valid kubeconfig
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                     sh '''
                         echo "Deploying to Kubernetes cluster..."
                         kubectl apply -f k8s-processed/ --validate=true
                         echo "Current deployment status:"
-                        kubectl get pods
-                        kubectl get deployments
+                        kubectl get pods --all-namespaces
+                        kubectl get deployments --all-namespaces
                         echo "Waiting for deployments to be ready..."
-                        kubectl wait --for=condition=Available --timeout=300s deployment/api-service || true
-                        kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service || true
-                        kubectl wait --for=condition=Available --timeout=300s deployment/training-service || true
-                        kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service || true
+                        kubectl wait --for=condition=Available --timeout=300s deployment/api-service --all-namespaces || true
+                        kubectl wait --for=condition=Available --timeout=300s deployment/monitoring-service --all-namespaces || true
+                        kubectl wait --for=condition=Available --timeout=300s deployment/training-service --all-namespaces || true
+                        kubectl wait --for=condition=Available --timeout=300s deployment/visualization-service --all-namespaces || true
                         echo "Final deployment status:"
-                        kubectl get pods
+                        kubectl get pods --all-namespaces
                     '''
                 }
             }
@@ -118,7 +105,7 @@ pipeline {
         }
         failure {
             echo 'Pipeline failed – dumping Kubernetes debug info…'
-            withKubeConfig([credentialsId: 'kubernetes-config']) {
+            withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                 sh '''
                     echo "=== Pods ==="
                     kubectl get pods --all-namespaces
