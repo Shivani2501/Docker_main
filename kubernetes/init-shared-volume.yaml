@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-shared-volume
+spec:
+  template:
+    spec:
+      containers:
+      - name: init-volume
+        image: busybox
+        command: ['sh', '-c', 'mkdir -p /data/logs /data/models /data/mlflow && echo "Directories created" && ls -la /data']
+        volumeMounts:
+        - name: shared-volume
+          mountPath: /data
+      restartPolicy: Never
+      volumes:
+      - name: shared-volume
+        persistentVolumeClaim:
+          claimName: shared-volume-claim
+  backoffLimit: 0
