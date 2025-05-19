@@ -1,12 +1,12 @@
 pipeline {
     agent any
-    
+
     environment {
         REGISTRY = "doublerandomexp25"
         REGISTRY_CREDENTIAL = 'docker-hub-credential'
         VERSION = "${env.BUILD_NUMBER}"
     }
-    
+
     stages {
         stage('Checkout') {
             steps {
@@ -28,7 +28,7 @@ pipeline {
                 sh "docker tag ${REGISTRY}/visualization-service:${VERSION} ${REGISTRY}/visualization-service:latest"
             }
         }
-        
+
         stage('Push Images') {
             steps {
                 withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL, 
@@ -50,22 +50,26 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Process Kubernetes Manifests') {
             steps {
-                sh 'mkdir -p k8s-processed'
                 sh '''
+                rm -rf k8s-processed
+                mkdir -p k8s-processed
                 for file in kubernetes/*.yaml; do
-                    sed 's|\\${REGISTRY}|${REGISTRY}|g; s|:latest|:${VERSION}|g' "${file}" > "k8s-processed/$(basename ${file})"
+                    base=$(basename $file)
+                    if [ "$base" = "kustomization.yaml" ]; then
+                        continue
+                    fi
+                    sed 's|\\${REGISTRY}|${REGISTRY}|g; s|:latest|:${VERSION}|g' "$file" > "k8s-processed/$base"
                 done
+                ls -la k8s-processed/
                 '''
-                sh 'ls -la k8s-processed/'
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                // Requires Jenkins secret file credential 'kubeconfig' containing a valid kubeconfig
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
                     sh '''
                         echo "Deploying to Kubernetes cluster..."
@@ -85,7 +89,7 @@ pipeline {
             }
         }
     }
-    
+
     post {
         always {
             sh 'rm -rf k8s-processed'
